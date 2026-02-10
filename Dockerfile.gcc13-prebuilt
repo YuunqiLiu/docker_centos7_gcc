@@ -1,0 +1,28 @@
+FROM docker.io/library/centos:7
+
+# 使用官方 yum 源
+RUN yum install -y wget bzip2 && \
+    yum clean all
+
+# 创建工具链安装目录
+WORKDIR /tmp
+
+# 下载预编译的 GCC 13 工具链
+# 从 Bootlin 下载支持 x86-64、glibc 的工具链（包含 GCC 13+）
+RUN wget -q https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--stable-2024.02-1.tar.bz2 \
+    -O toolchain.tar.bz2 && \
+    tar -xjf toolchain.tar.bz2 && \
+    mv x86-64--glibc--stable-2024.02-1 /opt/gcc-toolchain && \
+    rm toolchain.tar.bz2
+
+# 设置环境变量，将工具链的 bin 目录加入 PATH
+ENV PATH="/opt/gcc-toolchain/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/gcc-toolchain/lib:/opt/gcc-toolchain/lib64:${LD_LIBRARY_PATH}"
+
+WORKDIR /workspace
+
+# 验证安装
+RUN gcc --version && g++ --version && \
+    echo "GCC 工具链已安装到: /opt/gcc-toolchain"
+
+CMD ["/bin/bash"]
