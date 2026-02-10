@@ -1,26 +1,28 @@
 #!/bin/bash
 
-# 构建 Docker 镜像的脚本
+# 简化的构建脚本 - 使用最新的 GCC 13 版本
+# 如需更多选项，请使用 docker-workflow.sh
 
-echo "选择要构建的镜像版本："
-echo "1) 使用 devtoolset-11 (GCC 11) - 官方 SCL 仓库"
-echo "2) 使用预编译的 GCC 13 - conda-forge"
+echo "=========================================="
+echo " CentOS 7 + GCC 13 Docker 镜像构建"
+echo "=========================================="
+echo
 
-read -p "请选择 [1-2]: " choice
+# 检查 docker-workflow.sh 是否存在
+if [ -f "./docker-workflow.sh" ]; then
+    echo "使用 docker-workflow.sh 构建镜像..."
+    ./docker-workflow.sh build
+else
+    echo "构建 GCC 13 镜像..."
+    docker build -t centos7-gcc13:latest -f Dockerfile.gcc13-prebuilt .
+fi
 
-case $choice in
-    1)
-        echo "构建使用 devtoolset-11 的镜像..."
-        docker build -t centos7-gcc11:latest -f Dockerfile .
-        ;;
-    2)
-        echo "构建使用预编译 GCC 13 的镜像..."
-        docker build -t centos7-gcc13:latest -f Dockerfile.gcc13-prebuilt .
-        ;;
-    *)
-        echo "无效选择"
-        exit 1
-        ;;
-esac
-
-echo "构建完成！"
+echo
+echo "=========================================="
+echo " 构建完成！"
+echo "=========================================="
+echo
+echo "下一步："
+echo "  运行测试: ./docker-workflow.sh test"
+echo "  查看帮助: ./docker-workflow.sh --help"
+echo "  或手动运行: docker run -it --rm centos7-gcc13:latest"

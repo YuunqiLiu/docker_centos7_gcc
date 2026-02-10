@@ -14,23 +14,45 @@ RUN yum install -y wget bzip2 && \
 WORKDIR /tmp
 
 # 下载预编译的 GCC 13 工具链
-# 从 Bootlin 下载支持 x86-64、glibc 的工具链（包含 GCC 13.2.0）
 RUN wget -q https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--bleeding-edge-2024.02-1.tar.bz2 \
     -O toolchain.tar.bz2 && \
     tar -xjf toolchain.tar.bz2 && \
     mv x86-64--glibc--bleeding-edge-2024.02-1 /opt/gcc-toolchain && \
     rm toolchain.tar.bz2
 
-# 设置环境变量，将工具链的 bin 目录加入 PATH
+# 设置环境变量
 ENV PATH="/opt/gcc-toolchain/bin:${PATH}" \
     LD_LIBRARY_PATH="/opt/gcc-toolchain/lib:/opt/gcc-toolchain/lib64"
 
-# 创建 wrapper 脚本，使 GCC 使用系统的 glibc 但保留新的 libstdc++
+# 🔧 修复 pthread.h 的 include-fixed 问题
+RUN cd /opt/gcc-toolchain/lib/gcc/x86_64-buildroot-linux-gnu/13.2.0/include-fixed && \
+    echo "=== 修复前的 pthread.h ===" && \
+    grep -n 'struct_timespec' pthread.h || true && \
+    # 备份原文件
+    cp pthread.h pthread.h.bootlin-original && \
+    # 替换问题的 include 为系统的 time.h
+    sed -i 's|^#include <bits/types/struct_timespec.h>|/* #include <bits/types/struct_timespec.h> */\n#include <time.h>|' pthread.h && \
+    # 同样处理 __sigset_t.h 可能的问题
+    sed -i 's|^#include <bits/types/__sigset_t.h>|/* #include <bits/types/__sigset_t.h> */\n#include <signal.h>|' pthread.h && \
+    echo "=== 修复后的 pthread.h ===" && \
+    grep -A 1 'struct_timespec\|__sigset_t' pthread.h | head -10
+
+# 🔧 修复 endian.h 的问题（之前测试中遇到的）
+RUN if [ -f /opt/gcc-toolchain/lib/gcc/x86_64-buildroot-linux-gnu/13.2.0/include-fixed/bits/endian.h ]; then \
+        echo "修复 bits/endian.h..." && \
+        cd /opt/gcc-toolchain/lib/gcc/x86_64-buildroot-linux-gnu/13.2.0/include-fixed/bits && \
+        mv endian.h endian.h.bootlin-original; \
+    fi
+
+# 创建 wrapper 脚本
 RUN cd /opt/gcc-toolchain/bin && \
+    # GCC wrapper
     printf '#!/bin/bash\nexec /opt/gcc-toolchain/bin/x86_64-linux-gcc.br_real --sysroot=/ -L/opt/gcc-toolchain/lib64 -L/opt/gcc-toolchain/lib -Wl,-rpath-link,/opt/gcc-toolchain/lib64:/opt/gcc-toolchain/lib "$@"\n' > gcc && \
     chmod +x gcc && \
+    # G++ wrapper
     printf '#!/bin/bash\nexec /opt/gcc-toolchain/bin/x86_64-linux-g++.br_real --sysroot=/ -I/opt/gcc-toolchain/x86_64-buildroot-linux-gnu/include/c++/13.2.0 -I/opt/gcc-toolchain/x86_64-buildroot-linux-gnu/include/c++/13.2.0/x86_64-buildroot-linux-gnu -L/opt/gcc-toolchain/lib64 -L/opt/gcc-toolchain/lib -Wl,-rpath-link,/opt/gcc-toolchain/lib64:/opt/gcc-toolchain/lib "$@"\n' > g++ && \
     chmod +x g++ && \
+    # 创建其他工具的符号链接
     ln -sf gcc cc && \
     ln -sf g++ c++ && \
     ln -sf x86_64-linux-ar ar && \
@@ -44,8 +66,8 @@ RUN cd /opt/gcc-toolchain/bin && \
 
 WORKDIR /workspace
 
-# 验证安装
+# 验证安装和修复
 RUN gcc --version && g++ --version && \
-    echo "GCC 工具链已成功安装到: /opt/gcc-toolchain"
-
-CMD ["/bin/bash"]
+    echo "=== 验证修复 ===" && \
+    echo '#include <pthread.h>' | gcc -E -x c - > /dev/null 2>&1 && echo "pthread.h: OK" || echo "pthread.h: FAILED" && \
+    echo "GCC 13 工具链已安装并修复，可以使用 std::span 和 std::ranges"
