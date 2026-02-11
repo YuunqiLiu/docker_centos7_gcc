@@ -1,4 +1,10 @@
 #include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <unistd.h>
+#include <pthread.h>
+#include <math.h>
 
 // C++20 Concepts - 简单的概念定义
 template<typename T>
@@ -64,6 +70,99 @@ consteval int square(int n) {
 // C++20 constinit - 编译期初始化
 constinit int global_value = factorial(5);
 
+// 线程函数 - 测试 pthread（会使用 GLIBC）
+void* thread_function(void* arg) {
+    int* num = (int*)arg;
+    printf("   线程运行中，参数: %d\n", *num);
+    return NULL;
+}
+
+// 测试文件 I/O（会使用 GLIBC）
+void test_file_io() {
+    printf("7. File I/O (uses GLIBC):\n");
+    const char* filename = "/tmp/test_file.txt";
+    FILE* fp = fopen(filename, "w");
+    if (fp) {
+        fprintf(fp, "Hello from GCC 14!\n");
+        fclose(fp);
+        printf("   写入文件成功: %s\n", filename);
+        
+        // 读取文件
+        fp = fopen(filename, "r");
+        if (fp) {
+            char buffer[100];
+            if (fgets(buffer, sizeof(buffer), fp)) {
+                printf("   读取内容: %s", buffer);
+            }
+            fclose(fp);
+        }
+        remove(filename);
+    }
+    printf("\n");
+}
+
+// 测试时间函数（会使用 GLIBC）
+void test_time_functions() {
+    printf("8. Time functions (uses GLIBC):\n");
+    time_t current_time = time(NULL);
+    struct tm* local_time = localtime(&current_time);
+    printf("   当前时间: %04d-%02d-%02d %02d:%02d:%02d\n",
+           local_time->tm_year + 1900,
+           local_time->tm_mon + 1,
+           local_time->tm_mday,
+           local_time->tm_hour,
+           local_time->tm_min,
+           local_time->tm_sec);
+    printf("\n");
+}
+
+// 测试数学函数（会使用 libm，可能需要 GLIBC）
+void test_math_functions() {
+    printf("9. Math functions (uses libm/GLIBC):\n");
+    double x = 2.0;
+    printf("   sqrt(%.1f) = %.4f\n", x, sqrt(x));
+    printf("   sin(%.1f) = %.4f\n", x, sin(x));
+    printf("   log(%.1f) = %.4f\n", x, log(x));
+    printf("   pow(%.1f, 3) = %.4f\n", x, pow(x, 3.0));
+    printf("\n");
+}
+
+// 测试字符串函数（会使用 GLIBC）
+void test_string_functions() {
+    printf("10. String functions (uses GLIBC):\n");
+    char str1[100] = "Hello";
+    char str2[] = " World";
+    strcat(str1, str2);
+    printf("   strcat result: %s\n", str1);
+    printf("   strlen: %zu\n", strlen(str1));
+    
+    char* token = strtok(str1, " ");
+    printf("   strtok tokens: ");
+    while (token != NULL) {
+        printf("%s ", token);
+        token = strtok(NULL, " ");
+    }
+    printf("\n\n");
+}
+
+// 测试动态内存（会使用 GLIBC）
+void test_dynamic_memory() {
+    printf("11. Dynamic memory (uses GLIBC):\n");
+    int* arr = (int*)malloc(10 * sizeof(int));
+    if (arr) {
+        for (int i = 0; i < 10; i++) {
+            arr[i] = i * i;
+        }
+        printf("   动态数组: ");
+        for (int i = 0; i < 10; i++) {
+            printf("%d ", arr[i]);
+        }
+        printf("\n");
+        free(arr);
+    }
+    printf("\n");
+}
+
 int main() {
     printf("=== C++20 Features Test ===\n\n");
     
@@ -126,7 +225,34 @@ int main() {
     printf("   auto z = %s\n", z);
     printf("\n");
     
-    printf("=== All C++20 features working! ===\n");
+    // 测试文件 I/O（GLIBC 依赖）
+    test_file_io();
+    
+    // 测试时间函数（GLIBC 依赖）
+    test_time_functions();
+    
+    // 测试数学函数（GLIBC/libm 依赖）
+    test_math_functions();
+    
+    // 测试字符串函数（GLIBC 依赖）
+    test_string_functions();
+    
+    // 测试动态内存（GLIBC 依赖）
+    test_dynamic_memory();
+    
+    // 测试线程（pthread/GLIBC 依赖）
+    printf("12. Threads (uses pthread/GLIBC):\n");
+    pthread_t thread;
+    int thread_arg = 42;
+    if (pthread_create(&thread, NULL, thread_function, &thread_arg) == 0) {
+        pthread_join(thread, NULL);
+        printf("   线程执行完成\n");
+    } else {
+        printf("   线程创建失败\n");
+    }
+    printf("\n");
+    
+    printf("=== All C++20 features and GLIBC-dependent functions working! ===\n");
     
     return 0;
 }

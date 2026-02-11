@@ -1,46 +1,56 @@
-FROM docker.io/library/centos:7
+FROM quay.io/centos/centos:centos7
 
-# 替换为归档镜像源（CentOS 7 已 EOL）
+
+# 替换为阿里云镜像源（国内访问快）
 RUN sed -i 's|^mirrorlist=|#mirrorlist=|g' /etc/yum.repos.d/CentOS-*.repo && \
-    sed -i 's|^#baseurl=http://mirror.centos.org|baseurl=http://vault.centos.org|g' /etc/yum.repos.d/CentOS-*.repo
+    sed -i 's|^#baseurl=http://mirror.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo && \
+    sed -i 's|^baseurl=http://vault.centos.org|baseurl=https://mirrors.aliyun.com|g' /etc/yum.repos.d/CentOS-*.repo
 
-# 安装必要工具和系统开发库
-RUN yum install -y wget bzip2 && \
-    yum groupinstall -y "Development Tools" && \
-    yum install -y glibc-devel libstdc++-devel && \
+# 安装编译 GCC 所需的依赖（包含 curl 和静态库）
+RUN yum install -y wget curl bzip2 gcc gcc-c++ make gmp-devel mpfr-devel libmpc-devel glibc-static libstdc++-static && \
     yum clean all
 
-# 创建工具链安装目录
+# 设置工作目录
 WORKDIR /tmp
 
-# 下载预编译的 GCC 13 工具链
-# 从 Bootlin 下载支持 x86-64、glibc 的工具链（包含 GCC 13.2.0）
-RUN wget -q https://toolchains.bootlin.com/downloads/releases/toolchains/x86-64/tarballs/x86-64--glibc--bleeding-edge-2024.02-1.tar.bz2 \
-    -O toolchain.tar.bz2 && \
-    tar -xjf toolchain.tar.bz2 && \
-    mv x86-64--glibc--bleeding-edge-2024.02-1 /opt/gcc-toolchain && \
-    rm toolchain.tar.bz2
+# 下载 GCC 14.2.0 源码（使用 GNU 官方 FTP 镜像，显示进度条）
+RUN echo "开始下载 GCC 14.2.0 源码 (约 150MB)..." && \
+    wget --progress=bar:force:noscroll --tries=3 --waitretry=10 \
+    https://ftp.gnu.org/gnu/gcc/gcc-14.2.0/gcc-14.2.0.tar.gz \
+    -O gcc-14.2.0.tar.gz && \
+    echo "下载完成，文件大小: $(du -h gcc-14.2.0.tar.gz | cut -f1)"
 
-# 设置环境变量，将工具链的 bin 目录加入 PATH
-ENV PATH="/opt/gcc-toolchain/bin:${PATH}" \
-    LD_LIBRARY_PATH="/opt/gcc-toolchain/lib:/opt/gcc-toolchain/lib64"
+# 解压源码
+RUN echo "开始解压 GCC 14.2.0 源码..." && \
+    tar -xzf gcc-14.2.0.tar.gz && \
+    rm gcc-14.2.0.tar.gz && \
+    echo "GCC 源码已解压"
 
-# 创建 wrapper 脚本，使 GCC 使用系统的 glibc 但保留新的 libstdc++
-RUN cd /opt/gcc-toolchain/bin && \
-    printf '#!/bin/bash\nexec /opt/gcc-toolchain/bin/x86_64-linux-gcc.br_real --sysroot=/ -L/opt/gcc-toolchain/lib64 -L/opt/gcc-toolchain/lib -Wl,-rpath-link,/opt/gcc-toolchain/lib64:/opt/gcc-toolchain/lib "$@"\n' > gcc && \
-    chmod +x gcc && \
-    printf '#!/bin/bash\nexec /opt/gcc-toolchain/bin/x86_64-linux-g++.br_real --sysroot=/ -I/opt/gcc-toolchain/x86_64-buildroot-linux-gnu/include/c++/13.2.0 -I/opt/gcc-toolchain/x86_64-buildroot-linux-gnu/include/c++/13.2.0/x86_64-buildroot-linux-gnu -L/opt/gcc-toolchain/lib64 -L/opt/gcc-toolchain/lib -Wl,-rpath-link,/opt/gcc-toolchain/lib64:/opt/gcc-toolchain/lib "$@"\n' > g++ && \
-    chmod +x g++ && \
-    ln -sf gcc cc && \
-    ln -sf g++ c++ && \
-    ln -sf x86_64-linux-ar ar && \
-    ln -sf x86_64-linux-as as && \
-    ln -sf x86_64-linux-ld ld && \
-    ln -sf x86_64-linux-nm nm && \
-    ln -sf x86_64-linux-objcopy objcopy && \
-    ln -sf x86_64-linux-objdump objdump && \
-    ln -sf x86_64-linux-ranlib ranlib && \
-    ln -sf x86_64-linux-strip strip
+# 创建构建目录
+RUN mkdir -p /tmp/gcc-build
+
+WORKDIR /tmp/gcc-build
+
+# 配置 GCC（禁用一些不必要的功能以加快编译）
+RUN ../gcc-14.2.0/configure \
+    --prefix=/opt/gcc-14 \
+    --enable-languages=c,c++ \
+    --disable-multilib \
+    --disable-bootstrap \
+    --enable-checking=release
+
+# 编译 GCC（使用 nproc-2 个核心，避免系统卡死）
+RUN make -j$(expr $(nproc) - 2 \| 1)
+
+# 安装 GCC
+RUN make install
+
+# 清理构建文件
+RUN rm -rf /tmp/gcc-14.2.0 /tmp/gcc-build
+
+# 设置环境变量
+ENV PATH="/opt/gcc-14/bin:${PATH}" \
+    LD_LIBRARY_PATH="/opt/gcc-14/lib64:/opt/gcc-14/lib:${LD_LIBRARY_PATH}"
 
 WORKDIR /workspace
 
