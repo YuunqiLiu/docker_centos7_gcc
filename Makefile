@@ -7,6 +7,11 @@ BUILD_DIR := build
 TEST_DIR := $(BUILD_DIR)/test
 RELEASE_DIR := $(BUILD_DIR)/release
 
+# GHCR 推送配置（需要用户设置）
+GHCR_USERNAME ?= yuunqiliu
+GHCR_REGISTRY := ghcr.io
+GHCR_IMAGE := $(GHCR_REGISTRY)/$(GHCR_USERNAME)/centos7-gcc14:latest
+
 build:
 	@echo "=== 开始构建 Docker 镜像 ==="
 	@mkdir -p $(BUILD_DIR)
@@ -60,67 +65,79 @@ release:
 	@echo "=== 准备完成 ==="
 
 opt:
-	@echo "=== 优化镜像 (去除所有构建layers) ==="
+	@echo "=== 优化镜像 (扁平化为单层，保留ENV) ==="
 	@echo ""
-	@echo "1. 导出容器文件系统..."
-	docker run --name gcc-container $(IMAGE_NAME) true
-	docker export gcc-container > /tmp/gcc-export.tar
-	@echo "   ✓ 导出完成"
+	@echo "原镜像大小: $$(docker images $(IMAGE_NAME) --format='{{.Size}}')"
 	@echo ""
-	@echo "2. 导入为新镜像..."
-	docker import /tmp/gcc-export.tar $(IMAGE_NAME_OPT)
-	docker rm gcc-container
-	rm /tmp/gcc-export.tar
-	@echo "   ✓ 导入完成"
+	@echo "1. 创建临时容器并导出文件系统..."
+	docker create --name gcc-temp-container $(IMAGE_NAME)
+	docker export gcc-temp-container > /tmp/gcc-rootfs.tar
+	docker rm gcc-temp-container
+	@echo "   ✓ 文件系统已导出到 /tmp/gcc-rootfs.tar"
 	@echo ""
-	@echo "3. 镜像对比:"
+	@echo "2. 生成优化 Dockerfile..."
+	@echo "FROM scratch" > /tmp/Dockerfile.opt
+	@echo "ADD gcc-rootfs.tar /" >> /tmp/Dockerfile.opt
+	@echo "ENV PATH=/opt/gcc-14/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> /tmp/Dockerfile.opt
+	@echo "ENV LD_LIBRARY_PATH=/opt/gcc-14/lib64" >> /tmp/Dockerfile.opt
+	@echo "WORKDIR /workspace" >> /tmp/Dockerfile.opt
+	@echo "CMD [\"/bin/bash\"]" >> /tmp/Dockerfile.opt
+	@echo "   ✓ Dockerfile 已生成"
+	@echo ""
+	@echo "3. 构建优化镜像..."
+	docker build -t $(IMAGE_NAME_OPT) -f /tmp/Dockerfile.opt /tmp/
+	@echo "   ✓ 优化镜像已构建"
+	@echo ""
+	@echo "4. 清理临时文件..."
+	rm -f /tmp/gcc-rootfs.tar /tmp/Dockerfile.opt
+	@echo "   ✓ 临时文件已清理"
+	@echo ""
+	@echo "5. 验证 GCC 版本..."
+	@docker run --rm $(IMAGE_NAME_OPT) gcc --version | head -1 | grep "14\." || (echo "❌ GCC 版本不是 14!" && exit 1)
+	@docker run --rm $(IMAGE_NAME_OPT) gcc --version | head -1
+	@echo "   ✓ GCC 14 验证成功"
+	@echo ""
+	@echo "6. 镜像大小对比:"
 	@echo "   原镜像: $$(docker images $(IMAGE_NAME) --format='{{.Size}}')"
 	@echo "   优化后: $$(docker images $(IMAGE_NAME_OPT) --format='{{.Size}}')"
+	@echo ""
+	@echo "7. 删除原镜像 (只保留优化版本)..."
+	docker rmi $(IMAGE_NAME)
+	@echo "   ✓ 原镜像已删除"
 	@echo ""
 	@echo "=== 优化完成 ==="
 	@echo ""
 	@echo "下一步: make upload"
 
 upload:
-	@echo "=== 推送优化镜像到 GitHub Container Registry ==="
+	@echo "=== 推送镜像到 GitHub Container Registry ==="
 	@echo ""
-	@docker images $(IMAGE_NAME_OPT) --format="镜像大小: {{.Size}}" || (echo "❌ 优化镜像不存在，请先运行: make opt" && exit 1)
+	@echo "检查镜像..."
+	@docker images $(IMAGE_NAME_OPT) --format="✅ 镜像大小: {{.Size}}" || (echo "❌ 镜像不存在，请先运行: make opt" && exit 1)
 	@echo ""
-	@echo "前置要求:"
-	@echo "  - GitHub 用户名和 Personal Access Token (PAT)"
-	@echo "  - 访问: https://github.com/settings/tokens"
-	@echo "  - 勾选: write:packages, read:packages"
+	@echo "GHCR 推送配置:"
+	@echo "  GHCR_USERNAME: $(GHCR_USERNAME)"
+	@echo "  目标镜像: $(GHCR_IMAGE)"
 	@echo ""
-	@echo "推送步骤:"
+	@echo "开始推送流程..."
 	@echo ""
-	@echo "Step 1️⃣  登录到 GHCR"
-	@echo "   docker login ghcr.io"
-	@echo "   输入用户名: <your-github-username>"
-	@echo "   输入密码: <your-personal-access-token>"
+	@echo "Step 1️⃣  登录 GHCR (需要 GitHub Token)"
+	docker login $(GHCR_REGISTRY) -u $(GHCR_USERNAME)
 	@echo ""
 	@echo "Step 2️⃣  标记镜像"
-	@echo "   docker tag $(IMAGE_NAME_OPT) ghcr.io/<your-github-username>/centos7-gcc14:latest"
+	docker tag $(IMAGE_NAME_OPT) $(GHCR_IMAGE)
+	@echo "✅ 镜像已标记: $(GHCR_IMAGE)"
 	@echo ""
-	@echo "Step 3️⃣  推送镜像"
-	@echo "   docker push ghcr.io/<your-github-username>/centos7-gcc14:latest"
+	@echo "Step 3️⃣  推送镜像到 GHCR (这会花费几分钟)..."
+	docker push $(GHCR_IMAGE)
 	@echo ""
-	@echo "完整命令 (一键执行):"
-	@echo "   docker login ghcr.io && \\"
-	@echo "   docker tag $(IMAGE_NAME_OPT) ghcr.io/<your-github-username>/centos7-gcc14:latest && \\"
-	@echo "   docker push ghcr.io/<your-github-username>/centos7-gcc14:latest"
+	@echo "✅ 推送完成！"
 	@echo ""
-	@echo "验证:"
-	@echo "   访问 https://github.com/users/<your-github-username>/packages"
+	@echo "查看镜像:"
+	@echo "  https://github.com/users/$(GHCR_USERNAME)/packages"
 	@echo ""
-	@echo "使用镜像:"
-	@echo "   docker pull ghcr.io/<your-github-username>/centos7-gcc14:latest"
-	@echo ""
-	@echo "注意事项:"
-	@echo "   - 镜像将以私有方式上传，可在设置中改为公开"
-	@echo "   - 实际上传大小约 1.9GB (优化后)"
-	@echo "   - 下载时会自动重建Docker layers"
-	@echo ""
-	@echo "=== 推送指南完成 ==="
+	@echo "拉取镜像:"
+	@echo "  docker pull $(GHCR_IMAGE)"
 
 clean:
 	@echo "=== 清理中 ==="
