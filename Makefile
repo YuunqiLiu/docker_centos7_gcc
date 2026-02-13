@@ -2,7 +2,7 @@
 
 IMAGE_NAME := centos7-gcc14:latest
 IMAGE_NAME_OPT := centos7-gcc14:slim
-DOCKERFILE := Dockerfile.gcc13-prebuilt
+DOCKERFILE := Dockerfile
 BUILD_DIR := build
 TEST_DIR := $(BUILD_DIR)/test
 RELEASE_DIR := $(BUILD_DIR)/release
@@ -65,47 +65,52 @@ release:
 	@echo "=== 准备完成 ==="
 
 opt:
-	@echo "=== 优化镜像 (扁平化为单层，保留ENV) ==="
+	@echo "=== 构建优化镜像 (移除调试符号和LTO) ==="
 	@echo ""
-	@echo "原镜像大小: $$(docker images $(IMAGE_NAME) --format='{{.Size}}')"
+	@echo "原镜像信息:"
+	@docker images centos7-gcc14:latest --format="  大小: {{.Size}}" || echo "  (latest镜像)"
 	@echo ""
-	@echo "1. 创建临时容器并导出文件系统..."
-	docker create --name gcc-temp-container $(IMAGE_NAME)
+	@echo "1. 构建优化target (optimized)..."
+	docker build --target optimized -t centos7-gcc14:optimized -f $(DOCKERFILE) .
+	@echo "   ✓ 优化镜像已构建"
+	@echo ""
+	@echo "2. 验证 GCC 功能..."
+	@docker run --rm centos7-gcc14:optimized gcc --version | head -1 | grep "14\." || (echo "❌ GCC 版本不是 14!" && exit 1)
+	@echo "   ✓ GCC 14 验证成功"
+	@echo ""
+	@echo "3. 创建临时容器并导出文件系统..."
+	docker create --name gcc-temp-container centos7-gcc14:optimized > /dev/null
 	docker export gcc-temp-container > /tmp/gcc-rootfs.tar
-	docker rm gcc-temp-container
+	docker rm gcc-temp-container > /dev/null
 	@echo "   ✓ 文件系统已导出到 /tmp/gcc-rootfs.tar"
 	@echo ""
-	@echo "2. 生成优化 Dockerfile..."
+	@echo "4. 扁平化镜像为单层 (从scratch)..."
 	@echo "FROM scratch" > /tmp/Dockerfile.opt
 	@echo "ADD gcc-rootfs.tar /" >> /tmp/Dockerfile.opt
 	@echo "ENV PATH=/opt/gcc-14/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" >> /tmp/Dockerfile.opt
 	@echo "ENV LD_LIBRARY_PATH=/opt/gcc-14/lib64" >> /tmp/Dockerfile.opt
 	@echo "WORKDIR /workspace" >> /tmp/Dockerfile.opt
 	@echo "CMD [\"/bin/bash\"]" >> /tmp/Dockerfile.opt
-	@echo "   ✓ Dockerfile 已生成"
+	docker build -t $(IMAGE_NAME_OPT) -f /tmp/Dockerfile.opt /tmp/ > /dev/null
+	@echo "   ✓ 扁平化镜像已构建"
 	@echo ""
-	@echo "3. 构建优化镜像..."
-	docker build -t $(IMAGE_NAME_OPT) -f /tmp/Dockerfile.opt /tmp/
-	@echo "   ✓ 优化镜像已构建"
-	@echo ""
-	@echo "4. 清理临时文件..."
+	@echo "5. 清理临时文件..."
 	rm -f /tmp/gcc-rootfs.tar /tmp/Dockerfile.opt
 	@echo "   ✓ 临时文件已清理"
 	@echo ""
-	@echo "5. 验证 GCC 版本..."
-	@docker run --rm $(IMAGE_NAME_OPT) gcc --version | head -1 | grep "14\." || (echo "❌ GCC 版本不是 14!" && exit 1)
-	@docker run --rm $(IMAGE_NAME_OPT) gcc --version | head -1
-	@echo "   ✓ GCC 14 验证成功"
-	@echo ""
 	@echo "6. 镜像大小对比:"
-	@echo "   原镜像: $$(docker images $(IMAGE_NAME) --format='{{.Size}}')"
-	@echo "   优化后: $$(docker images $(IMAGE_NAME_OPT) --format='{{.Size}}')"
+	@docker images centos7-gcc14:optimized --format="  优化多层版本:  {{.Size}}"
+	@docker images $(IMAGE_NAME_OPT) --format="  扁平化版本:    {{.Size}}"
 	@echo ""
-	@echo "7. 删除原镜像 (只保留优化版本)..."
-	docker rmi $(IMAGE_NAME)
-	@echo "   ✓ 原镜像已删除"
+	@echo "7. 验证扁平化镜像..."
+	@docker run --rm $(IMAGE_NAME_OPT) gcc --version | head -1
+	@echo "   ✓ 扁平化镜像验证成功"
 	@echo ""
 	@echo "=== 优化完成 ==="
+	@echo ""
+	@echo "可用的优化镜像:"
+	@echo "  - centos7-gcc14:optimized  (多层优化版本)"
+	@echo "  - $(IMAGE_NAME_OPT)        (单层扁平化版本，推荐用于生产)"
 	@echo ""
 	@echo "下一步: make upload"
 
